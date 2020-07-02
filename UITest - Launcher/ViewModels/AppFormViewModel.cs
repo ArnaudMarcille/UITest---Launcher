@@ -1,10 +1,11 @@
 ﻿using System;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Management.Automation;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Windows;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using Microsoft.Win32;
 using Newtonsoft.Json;
@@ -82,18 +83,30 @@ namespace UITest___Launcher.ViewModels
 
         private void ExecuteTestExecute()
         {
+            Task task = new Task(async () => { await ExecutePowerShell(); });
+            task.Start();
+        }
+
+        private Task ExecutePowerShell()
+        {
+            UpdateResultValue("==== Start ====");
+
             try
             {
                 PowerShell ps = PowerShell.Create();
+
+                PSDataCollection<PSObject> output = new PSDataCollection<PSObject>();
+                output.DataAdded += new EventHandler<DataAddedEventArgs>(Output_DataAdded);
+
                 var loginCommand = ps.AddCommand("appcenter")
                    .AddArgument("login")
                    .AddParameter("--token", Token)
-                   .Invoke();
+                   .BeginInvoke<PSObject, PSObject>(null, output);
 
-                foreach (PSObject result in loginCommand)
-                {
-                    UpdateResultValue(result.ToString());
-                }
+                loginCommand.AsyncWaitHandle.WaitOne();
+
+                PSDataCollection<PSObject> secondOutput = new PSDataCollection<PSObject>();
+                secondOutput.DataAdded += new EventHandler<DataAddedEventArgs>(Output_DataAdded);
 
                 var testCommand = ps.AddCommand("appcenter")
                     .AddArgument("test")
@@ -107,18 +120,28 @@ namespace UITest___Launcher.ViewModels
                     .AddParameter("--locale", SurroundByQuote(Locale))
                     .AddParameter("--include-category", Category)
                     .AddArgument("--async")
-                    .Invoke();
+                    .BeginInvoke<PSObject, PSObject>(null, secondOutput);
 
-                foreach (PSObject result in testCommand)
-                {
-                    UpdateResultValue(result.ToString());
-                }
+                testCommand.AsyncWaitHandle.WaitOne();
             }
             catch (Exception e)
             {
-                MessageBox.Show(e.Message);
+                UpdateResultValue(e.Message);
             }
 
+            UpdateResultValue("==== End ====");
+            return Task.CompletedTask;
+        }
+
+        private void Output_DataAdded(object sender, DataAddedEventArgs e)
+        {
+            PSDataCollection<PSObject> myp = (PSDataCollection<PSObject>)sender;
+
+            Collection<PSObject> results = myp.ReadAll();
+            foreach (PSObject result in results)
+            {
+                UpdateResultValue(result.ToString());
+            }
         }
 
         private string SurroundByQuote(string value)
